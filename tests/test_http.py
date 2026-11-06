@@ -50,6 +50,16 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(post(self.url+'/ok', {'hello':'world'}, 'TOKEN', 1), {'ok':True})
         self.assertEqual(self.server.seen[-1][1:], ('Bearer test-secret', {'hello':'world'}))
 
+    def test_actual_http_uses_named_key_from_env_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_file=Path(directory)/'key.env'
+            env_file.write_text('TOKEN="file-test-secret"\n')
+            env_file.chmod(0o600)
+            with patch.dict(os.environ,TOKEN='wrong-ambient-key'):
+                result=post(self.url+'/ok',{},'TOKEN',1,key_env_file=str(env_file))
+            self.assertEqual(result,{'ok':True})
+            self.assertEqual(self.server.seen[-1][1],'Bearer file-test-secret')
+
     def test_error_taxonomy_and_no_error_body_leak(self):
         for status, expected in ((401,AuthenticationError),(403,AuthenticationError),(429,RateLimitError),(503,BackendUnavailable),(404,UnsupportedCapability),(400,InvalidResponse)):
             with self.subTest(status=status), self.assertRaises(expected) as cm:

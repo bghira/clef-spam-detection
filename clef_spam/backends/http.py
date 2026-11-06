@@ -1,8 +1,9 @@
 """Bounded JSON HTTP; never expose request secrets or provider error bodies."""
 import json
-import os
+from pathlib import Path
 import socket
 from urllib import request, error, parse
+from ..credentials import api_key, VARIABLE
 from ..config import number, text
 from ..errors import (ConfigError, AuthenticationError, RateLimitError,
                       BackendUnavailable, BackendTimeout, InvalidResponse, UnsupportedCapability)
@@ -32,12 +33,10 @@ def endpoint(url):
     return url
 
 
-def post(url, payload, key_env, timeout):
+def post(url, payload, key_env, timeout, *, key_env_file=None):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if key_env:
-        token = os.environ.get(key_env)
-        if not token or any(ord(c) < 32 or ord(c) == 127 for c in token):
-            raise AuthenticationError("configured API key environment variable is unset")
+        token = api_key(key_env, key_env_file)
         headers["Authorization"] = "Bearer " + token
     req = request.Request(url, json.dumps(payload, allow_nan=False).encode(), headers, method="POST")
     try:
@@ -76,5 +75,12 @@ def common(options):
     key = options.get("api_key_env")
     if key is not None:
         text(key, "api_key_env")
+        if not VARIABLE.fullmatch(key):
+            raise ConfigError("api_key_env must be an environment variable name")
+    key_file = options.get("api_key_env_file")
+    if key_file is not None:
+        text(key_file, "api_key_env_file")
+        if key is None or not Path(key_file).is_absolute():
+            raise ConfigError("api_key_env_file requires api_key_env and an absolute path")
     timeout = number(options.get("timeout_seconds", 15), "timeout_seconds", 0.1, 120)
-    return model, key, timeout
+    return model, key, timeout, key_file

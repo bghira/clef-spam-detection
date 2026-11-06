@@ -21,11 +21,12 @@ Every example backend is disabled. Validation reports `ready: false` until you:
 
 1. Set one backend's `disabled` to `false` and fill its options.
 2. Add its configuration name to `backend_order` (for example `["cloudflare"]`).
-3. Export the environment variable named by `api_key_env` for authenticated APIs.
+3. Supply the variable named by `api_key_env`, either in the process environment
+   or through `api_key_env_file` as described below.
 
 All enabled backends must appear exactly once in the order. An omitted `disabled`
 means disabled. `config.json` is ignored by Git. Store credentials in environment
-variables rather than config; config may still contain private infrastructure
+variables or a restricted credential file rather than config; config may still contain private infrastructure
 addresses. Run from this directory or pass an absolute `--config` path.
 
 ```sh
@@ -41,6 +42,63 @@ headers. Neither sends or moves mail. Errors go to stderr as JSON, without
 fabricating a ham result. Exit status: 0 success, 2 configuration error, 1 input,
 backend, or I/O failure. A caller must check the exit status before accepting the
 output; shell redirection may leave an empty output file after failure.
+
+## API keys from an environment file
+
+All HTTP backends accept an optional **absolute** `api_key_env_file` path alongside
+`api_key_env`, the name of the variable to select. For example, an Ollama Cloud
+backend can use:
+
+```json
+{
+  "type": "openai_compatible",
+  "disabled": true,
+  "options": {
+    "endpoint": "https://ollama.com/v1/chat/completions",
+    "model": "YOUR_OLLAMA_CLOUD_MODEL",
+    "api_key_env": "OLLAMA_API_KEY",
+    "api_key_env_file": "/etc/environment.d/99-ollama-api.conf",
+    "timeout_seconds": 30
+  }
+}
+```
+
+Ollama documents this cloud endpoint and bearer-key authentication in its
+[OpenAI compatibility guide](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx).
+Replace the model and variable name with those you actually use. The example
+remains disabled and reported-score policy still requires a separate opt-in.
+
+The supported file format is a small **literal assignment** subset:
+
+```sh
+# Comments and blank lines are allowed.
+OLLAMA_API_KEY="replace-with-your-key"
+# Optional: export OLLAMA_API_KEY='replace-with-your-key'
+```
+
+Quotes, embedded `=` / `#` characters, and whitespace-separated trailing comments
+are supported. Duplicate variables, malformed lines, expansions (`$VAR`, `${VAR}`),
+command substitution, and multiline values are rejected. This is **not** a shell
+or complete systemd environment.d interpreter; no code is executed and no
+variables from the file are exported into the process environment. A configured
+file is authoritative: if it cannot supply the named key, classification fails
+rather than silently using an unrelated ambient credential. Without a file,
+`api_key_env` retains its original process-environment behavior.
+
+The loader opens the file only when making an authenticated request. Initialization
+and `validate` never read credentials. Each request reopens it so key rotations
+are picked up without restarting a long-running classifier. Files are limited to
+64 KiB and must be regular files owned by root or the process user. Symlinks,
+world access, and group/other writes are rejected. On Linux, use `0600` for a
+process-owned file or `0640 root:clef-spam` for a root-managed credential read by
+the `clef-spam` service account. Keep the account in the matching group and give
+it directory traversal access; the account needs no write access to credentials.
+Parsing and access errors never contain file contents or key values.
+
+Credentials should be stored outside the repository. The ignored `config.json`
+can reference the path. A service account also needs read access to its chosen
+configuration and installed code; it does not need a login shell or ownership of
+the repository. No backend is automatically enabled by creating the account.
 
 ## Questions, scores, and delivery policy
 

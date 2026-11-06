@@ -24,26 +24,26 @@ def native_result(data, expected_model):
 
 class SystemOne:
     capabilities = BackendCapabilities(ScoreKind.NATIVE_PROBABILITY)
-    allowed = {"model", "endpoint", "api_key_env", "timeout_seconds"}
+    allowed = {"model", "endpoint", "api_key_env", "api_key_env_file", "timeout_seconds"}
 
     def __init__(self, options):
         keys(options, self.allowed, "systemone options")
-        self.model, self.key, self.timeout = common(options)
+        self.model, self.key, self.timeout, self.key_file = common(options)
         self.endpoint = endpoint(options.get("endpoint"))
 
     def classify(self, request: ClassificationRequest) -> Classification:
-        return native_result(post(self.endpoint, decision_payload(self.model, request), self.key, self.timeout), self.model)
+        return native_result(post(self.endpoint, decision_payload(self.model, request), self.key, self.timeout, key_env_file=self.key_file), self.model)
 
     def close(self):
         pass
 
 class WorkersAI(SystemOne):
     def __init__(self, options):
-        keys(options, {"account_id", "model", "api_key_env", "timeout_seconds"}, "workers_ai options")
+        keys(options, {"account_id", "model", "api_key_env", "api_key_env_file", "timeout_seconds"}, "workers_ai options")
         account = text(options.get("account_id"), "account_id")
         if not re.fullmatch(r"[A-Za-z0-9_-]+", account):
             raise ConfigError("invalid Cloudflare account_id")
-        self.model, self.key, self.timeout = common(options)
+        self.model, self.key, self.timeout, self.key_file = common(options)
         if self.model not in {"clef", "clef-flash"}:
             raise ConfigError("Workers AI model must be clef or clef-flash")
         if self.key is None:
@@ -51,7 +51,7 @@ class WorkersAI(SystemOne):
         self.endpoint = f"https://api.cloudflare.com/client/v4/accounts/{quote(account)}/ai/run/@cf/cloudflare/{self.model}"
 
     def classify(self, request):
-        data = post(self.endpoint, decision_payload(self.model, request), self.key, self.timeout)
+        data = post(self.endpoint, decision_payload(self.model, request), self.key, self.timeout, key_env_file=self.key_file)
         if data.get("success") is not True or not isinstance(data.get("result"), dict):
             raise InvalidResponse("Workers AI returned an unsuccessful response")
         return native_result(data["result"], self.model)
@@ -61,7 +61,7 @@ class OpenAICompatible(SystemOne):
 
     def __init__(self, options):
         keys(options, self.allowed, "openai_compatible options")
-        self.model, self.key, self.timeout = common(options)
+        self.model, self.key, self.timeout, self.key_file = common(options)
         self.endpoint = endpoint(options.get("endpoint"))
 
     def classify(self, request):
@@ -73,7 +73,7 @@ class OpenAICompatible(SystemOne):
                            "Answer the user's classification question with a JSON object containing only "
                            "spam_score: a number from 0 to 1, meaning how likely the answer is yes.")},
                        {"role": "user", "content": json.dumps({"question": request.question, "email_evidence": request.state})}]}
-        data = post(self.endpoint, payload, self.key, self.timeout)
+        data = post(self.endpoint, payload, self.key, self.timeout, key_env_file=self.key_file)
         try:
             choice = data["choices"][0]
             if choice.get("finish_reason") != "stop":
