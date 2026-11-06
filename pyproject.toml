@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clef-spam-detection"
+version = "0.1.0"
+description = "Pluggable email classification with Clef and explicit score semantics"
+requires-python = ">=3.11"
+authors = [{name = "Bagheera Bghira", email = "bghira@users.github.com"}]
+dependencies = []
+
+[project.optional-dependencies]
+transformers = ["torch>=2.11", "transformers>=5.10.2", "huggingface-hub", "safetensors"]
+
+[project.scripts]
+clef-spam = "clef_spam.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clef_spam*"]
