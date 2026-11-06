@@ -1,0 +1,5 @@
+# Preserve existing content_filter / antivirus configuration.
+# Apply to virtual mailbox delivery, not outgoing SMTP relays.
+virtual_transport = clef:
+clef_destination_recipient_limit = 1
+clef_time_limit = 120s

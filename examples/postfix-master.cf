@@ -1,0 +1,8 @@
+# Merge into master.cf; paths may need adapting to your installation.
+# One recipient per invocation is REQUIRED (see postfix-main.cf).
+clef unix - n n - 2 pipe
+  user=clef-spam null_sender=
+  argv=/data/scripts/clef-spam-detection/.venv/bin/clef-spam
+    --config=/data/scripts/clef-spam-detection/config.json deliver
+    --sender=${sender} --recipient=${recipient}
+    --lmtp-socket=/run/dovecot/clef-lmtp --failure-mode=deliver

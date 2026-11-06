@@ -7,6 +7,21 @@ from .errors import InputError
 
 
 def annotate(raw: bytes, result: dict) -> bytes:
+    values = {
+        'X-Clef-Verdict': result['verdict'],
+        'X-Clef-Action': result['action'],
+        'X-Clef-Score': format(result['classification']['spam_score'], '.6f'),
+        'X-Clef-Score-Kind': result['classification']['score_kind'],
+    }
+    return _annotate(raw, values)
+
+
+def annotate_unclassified(raw: bytes, error_code: str) -> bytes:
+    return _annotate(raw, {'X-Clef-Verdict': 'unclassified',
+                           'X-Clef-Action': 'deliver', 'X-Clef-Error': error_code})
+
+
+def _annotate(raw: bytes, values: dict) -> bytes:
     boundary = b'\r\n\r\n' if b'\r\n\r\n' in raw else b'\n\n'
     if boundary not in raw:
         raise InputError("filter requires a complete message with a header/body separator")
@@ -20,12 +35,6 @@ def annotate(raw: bytes, result: dict) -> bytes:
             dropping = line.split(b':', 1)[0].lower().startswith(b'x-clef-')
         if not dropping:
             kept.append(line)
-    values = {
-        'X-Clef-Verdict': result['verdict'],
-        'X-Clef-Action': result['action'],
-        'X-Clef-Score': format(result['classification']['spam_score'], '.6f'),
-        'X-Clef-Score-Kind': result['classification']['score_kind'],
-    }
     added = []
     for name, value in values.items():
         value = str(value)

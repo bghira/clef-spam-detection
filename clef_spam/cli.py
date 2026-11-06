@@ -9,14 +9,25 @@ from .filtering import annotate
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Classify RFC 5322 email; never deliver, move, or reject it.")
+    parser = argparse.ArgumentParser(description="Classify email, filter bytes, or deliver a single Postfix recipient via LMTP.")
     parser.add_argument("--config", default="config.json", help="configuration path (default: ./config.json)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("validate", help="validate configuration without inference or model downloads")
     for command in ("classify", "filter"):
         cmd = sub.add_parser(command, help="JSON verdict" if command == "classify" else "email with trusted policy headers")
         cmd.add_argument("message", nargs="?", default="-", help=".eml path, or - for stdin")
+    deliver = sub.add_parser("deliver", help="Postfix pipe delivery for exactly one envelope recipient")
+    deliver.add_argument("--sender", required=True, help="envelope sender; empty string for bounces")
+    deliver.add_argument("--recipient", required=True, help="one envelope recipient, including Bcc")
+    deliver.add_argument("--lmtp-socket", required=True, help="absolute Unix path to Dovecot LMTP")
+    deliver.add_argument("--lmtp-timeout", type=float, default=30)
+    deliver.add_argument("--max-delivery-bytes", type=int, default=536870912)
+    deliver.add_argument("--failure-mode", choices=("defer", "deliver"), default="defer",
+                         help="inference failure policy; delivery errors always defer")
     args = parser.parse_args(argv)
+    if args.command == "deliver":
+        from .delivery import run
+        return run(args, sys.stdin.buffer)
     engine = None
     try:
         config = load(args.config)

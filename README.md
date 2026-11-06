@@ -4,9 +4,10 @@ Email classification using Cloudflare Clef, with explicit probability semantics,
 replaceable inference backends, and a delivery-policy layer. Python 3.11+.
 The core and HTTP backends have **no third-party runtime dependencies**.
 
-This first version classifies messages and provides a byte-stream filter plus a
-Sieve example. It does **not** run an SMTP/LMTP listener, deliver messages, install
-mail-server configuration, or generate learned rules.
+This version classifies messages, provides a byte-stream filter, and supports
+single-recipient Postfix pipe delivery through a downstream Unix LMTP socket.
+It does **not** run a network listener or automatically install mail-server
+configuration, and it does not generate learned rules.
 
 ## Start locally
 
@@ -38,7 +39,7 @@ addresses. Run from this directory or pass an absolute `--config` path.
 ```
 
 `classify` emits JSON. `filter` emits email bytes with regenerated `X-Clef-*`
-headers. Neither sends or moves mail. Errors go to stderr as JSON, without
+headers. These two commands never send or move mail. Errors go to stderr as JSON, without
 fabricating a ham result. Exit status: 0 success, 2 configuration error, 1 input,
 backend, or I/O failure. A caller must check the exit status before accepting the
 output; shell redirection may leave an empty output file after failure.
@@ -280,23 +281,66 @@ hard timeout support; no bundled backend currently claims a hard total deadline.
 The engine has no cache, circuit breaker, persistent queue, or per-recipient
 policy yet. Those belong in the subsequent long-running integration layer.
 
-## Postfix / Dovecot integration boundary
+## Postfix / Dovecot delivery
+
+The `deliver` command is a Postfix **pipe transport**, not an SMTP/LMTP listener.
+It spools the input to a private temporary file, classifies bounded evidence,
+strips sender-supplied `X-Clef-*` headers, and delivers to exactly one envelope
+recipient through Dovecot's Unix LMTP socket. There are no additional dependencies
+or long-running Clef daemon. Keep existing antivirus/antispam filtering ahead of
+this final local-delivery step; outgoing remote mail need not use this transport.
+
+The sample files in `examples/postfix-master.cf`, `examples/postfix-main.cf`, and
+`examples/dovecot-clef.conf` show the wiring for `/data/scripts/clef-spam-detection`.
+Review and merge them into your own configuration; installation does not edit
+Postfix/Dovecot. Do not replace existing transports used for other mailbox types.
+The service account needs read access to the code, config and credentials and
+write access to the LMTP socket. It does not need access to Postfix's private
+queue directory or mailbox ownership. A separate restricted Dovecot listener
+avoids broadening access to Postfix's private directory.
+
+**`clef_destination_recipient_limit = 1` is mandatory.** The CLI accepts one
+`--recipient` and uses one final LMTP DATA response. Postfix splits multi-recipient
+mail into separate invocations; envelope Bcc recipients and null senders are
+preserved. There is presently one inference per recipient, with no shared cache.
+Do not use a transport configuration that sends multiple recipients to this CLI.
+
+`deliver` returns success only after Dovecot confirms DATA delivery. Inference
+failure mode is explicit: `--failure-mode=defer` (default) retains the message in
+the Postfix queue; `--failure-mode=deliver` forwards it with an `unclassified`
+verdict and `deliver` action, without a fabricated score. Oversized classification
+input may similarly be delivered unclassified. Invalid configuration, malformed
+headers/envelopes, spool failures and **all** downstream delivery failures return
+`EX_TEMPFAIL` (75), leaving responsibility with Postfix. This includes permanent
+LMTP replies; Postfix's ordinary queue lifetime remains the final retry bound.
+As with ordinary SMTP/LMTP, connection loss after acceptance but before the final
+acknowledgement can result in duplicate delivery on retry; this is not an exactly-once
+protocol. A failed QUIT is never interpreted as a failed accepted delivery.
+
+The separate delivery-spool limit defaults to 512 MiB; set it above the upstream
+Postfix `message_size_limit`, with room for added headers. The classification
+limit stays at 2 MiB by default. Data is streamed to disk and LMTP, with bounded
+buffers and SMTP dot stuffing, so large attachments need not be held in memory.
+Headers are bounded to 256 KiB. Non-ASCII envelopes or headers require downstream
+SMTPUTF8 support; otherwise delivery defers rather than corrupting addresses.
+Unix sockets are required. The Postfix sample caps simultaneous invocations at
+two, and the pipe's process timeout should exceed inference plus delivery time.
+A killed pipe or failed delivery returns no successful queue acknowledgement.
+
+Classification decisions and delivery status are logged with the `clef-spam`
+syslog tag and mail facility; no bodies, API keys or envelope addresses are logged
+by this command. An API outage can therefore be observed without blocking mail
+when `--failure-mode=deliver` is selected.
 
 The included `examples/clef-junk.sieve` files mail into Junk **only** when the
-trusted action is `junk`; observe mode never triggers it. It does not replace a
-user's existing Sieve script. Inspect and merge script ordering before installing.
+trusted action is `junk`; observe mode never triggers it. Merge it as a global
+before-script without replacing a user's existing Sieve script, and preserve any
+existing before-script ordering. Enable it only behind the trusted stripping
+boundary. Keep the old Postfix transport/config backup for rollback.
 
-Keep existing antivirus/antispam filters. To connect this project to mail flow,
-choose an after-queue adapter with defined failure handling. An SMTP or LMTP proxy
-must preserve the envelope, Bcc, per-recipient results, retry behavior, and queue
-ownership. The byte-stream CLI is not an LMTP server and must not be configured
-as a Postfix delivery transport by itself. No success response may be sent before
-the next queue or delivery agent accepts responsibility for the message.
-
-Evaluate observe-only results against labeled spam **and ham** first. Enable
-`observe_only: false` only after choosing a threshold and deciding whether
-inference failures should deliver unclassified or defer. No live mail-server
-configuration is altered by installation.
+Evaluate observe-only results against labeled spam **and ham** first. Disable
+`observe_only` only after choosing a threshold. The delivery integration honors
+this setting and never forces a spam result into Junk during observation.
 
 ## Development
 
