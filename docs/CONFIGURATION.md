@@ -21,9 +21,11 @@ Provider options: [Workers AI](../install/providers/CLOUDFLARE.md),
 
 ## Policy
 
-`question` is configurable, but **yes must mean spam**. The default asks whether
-an email is spam or phishing; reversing the question would reverse the score's
-meaning. Clef uses the native `noul` probability, not `choice.confidence`.
+`question` is configurable, but **yes must mean spam**. The default asks about
+message purpose and evidence of deception while distinguishing ordinary
+correspondence from unsolicited or fraudulent content. Reversing the question
+would reverse the score's meaning. See [question design](QUESTION_DESIGN.md).
+Clef uses the native `noul` probability, not `choice.confidence`.
 Chat-model scores are marked `reported_score` and are not treated as equivalent.
 A probability threshold is not a guarantee of a particular false-positive rate;
 evaluate labeled spam and ham before enabling routing.

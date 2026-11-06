@@ -14,7 +14,7 @@ Configure `backends.ollama_cloud`:
   "disabled": true,
   "options": {
     "endpoint": "https://ollama.com/v1/systemone",
-    "model": "clef-flash:9b",
+    "model": "clef:27b",
     "api_key_env": "OLLAMA_API_KEY",
     "timeout_seconds": 30
   }
@@ -25,8 +25,10 @@ Supply `OLLAMA_API_KEY` through the environment or an
 [API credential file](../CREDENTIALS.md). Set `disabled` to `false` and
 `backend_order` to `["ollama_cloud"]`. Follow the [installation check](../README.md#check-and-use).
 
-`clef-flash:9b` selects the 9B model. Use a model identifier supported by your
-Ollama Cloud account; availability is controlled by the provider.
+The example selects the 27B model. For the smaller 9B variant, use
+`clef-flash:9b`. Evaluate the selected model with your policy before enabling
+routing; scores are not interchangeable across models. Availability is controlled
+by the provider.
 
 ## Local Ollama
 

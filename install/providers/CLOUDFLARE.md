@@ -36,8 +36,9 @@ Set `disabled` to `false` and `backend_order` to `["cloudflare"]`, then:
 .venv/bin/clef-spam --config config.json classify message.eml
 ```
 
-Keep observation enabled while evaluating the threshold. The installation needs
-no Cloudflare SDK or deployed Worker.
+Keep observation enabled while evaluating the model, question, and threshold
+as a unit; see [question design](../../docs/QUESTION_DESIGN.md). The installation
+needs no Cloudflare SDK or deployed Worker.
 
 Upstream: [Clef](https://developers.cloudflare.com/workers-ai/models/clef/) ·
 [Clef Flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/).
