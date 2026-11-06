@@ -57,4 +57,3 @@ sharing it unsynchronized. Backend capability flags describe local execution and
 hard timeout support; no bundled backend currently claims a hard total deadline.
 The engine has no shared cache, circuit breaker, persistent queue, or per-recipient
 policy. Delivery queue ownership belongs to the mail-server adapter.
-
