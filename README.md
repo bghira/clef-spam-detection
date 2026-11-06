@@ -1,359 +1,51 @@
 # clef-spam-detection
 
-Email classification using Cloudflare Clef, with explicit probability semantics,
-replaceable inference backends, and a delivery-policy layer. Python 3.11+.
-The core and HTTP backends have **no third-party runtime dependencies**.
+Classify email with Cloudflare Clef and route high-confidence spam to Junk through
+Dovecot Sieve. Cloudflare Workers AI is the primary provider; adapters also support
+Ollama, self-hosted Clef, local Transformers inference, and compatible chat APIs.
 
-This version classifies messages, provides a byte-stream filter, and supports
-single-recipient Postfix pipe delivery through a downstream Unix LMTP socket.
-It does **not** run a network listener or automatically install mail-server
-configuration, and it does not generate learned rules.
+Python 3.11+. The core, HTTP providers, and Postfix transport have no third-party
+runtime dependencies. Classification starts in **observe mode** so you can review
+results before enabling Junk routing.
 
-## Start locally
+## Get started
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install .
 cp config.json.example config.json
+```
+
+[Configure Cloudflare Workers AI](install/providers/CLOUDFLARE.md), then check your
+configuration and classify an email:
+
+```sh
 .venv/bin/clef-spam --config config.json validate
-```
-
-Every example backend is disabled. Validation reports `ready: false` until you:
-
-1. Set one backend's `disabled` to `false` and fill its options.
-2. Add its configuration name to `backend_order` (for example `["cloudflare"]`).
-3. Supply the variable named by `api_key_env`, either in the process environment
-   or through `api_key_env_file` as described below.
-
-All enabled backends must appear exactly once in the order. An omitted `disabled`
-means disabled. `config.json` is ignored by Git. Store credentials in environment
-variables or a restricted credential file rather than config; config may still contain private infrastructure
-addresses. Run from this directory or pass an absolute `--config` path.
-
-```sh
 .venv/bin/clef-spam --config config.json classify message.eml
-# Or read RFC 5322 bytes from stdin:
-.venv/bin/clef-spam --config config.json classify < message.eml
-# Write a filtered message to a NEW file (never overwrite the input):
-.venv/bin/clef-spam --config config.json filter message.eml > filtered.eml
 ```
 
-`classify` emits JSON. `filter` emits email bytes with regenerated `X-Clef-*`
-headers. These two commands never send or move mail. Errors go to stderr as JSON, without
-fabricating a ham result. Exit status: 0 success, 2 configuration error, 1 input,
-backend, or I/O failure. A caller must check the exit status before accepting the
-output; shell redirection may leave an empty output file after failure.
+All providers in `config.json.example` are disabled. Enable one and select it in
+`backend_order`; keep credentials outside Git. See [installation](install/README.md)
+and [credential files](install/CREDENTIALS.md).
 
-## API keys from an environment file
+## Providers
 
-All HTTP backends accept an optional **absolute** `api_key_env_file` path alongside
-`api_key_env`, the name of the variable to select. For example, an Ollama Cloud
-backend can use:
+- [Cloudflare Workers AI](install/providers/CLOUDFLARE.md) — native Clef and Clef Flash.
+- [Ollama](install/providers/OLLAMA.md) — native Clef through SystemOne.
+- [Self-hosted SystemOne](install/providers/SYSTEMONE.md).
+- [Hugging Face Transformers](install/providers/TRANSFORMERS.md).
+- [OpenAI-compatible chat APIs](install/providers/OPENAI_COMPATIBLE.md) — reported scores, not native Clef probabilities.
 
-```json
-{
-  "type": "openai_compatible",
-  "disabled": true,
-  "options": {
-    "endpoint": "https://ollama.com/v1/chat/completions",
-    "model": "YOUR_OLLAMA_CLOUD_MODEL",
-    "api_key_env": "OLLAMA_API_KEY",
-    "api_key_env_file": "/etc/environment.d/99-ollama-api.conf",
-    "timeout_seconds": 30
-  }
-}
-```
+## Mail-server integration
 
-Ollama documents this cloud endpoint and bearer-key authentication in its
-[OpenAI compatibility guide](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx).
-Replace the model and variable name with those you actually use. The example
-remains disabled and reported-score policy still requires a separate opt-in.
+- [Postfix + Dovecot](install/smtp/postfix/README.md) — pipe transport, LMTP delivery, and Sieve templates.
+- [Exim](install/smtp/exim/README.md) — integration status and requirements.
 
-The supported file format is a small **literal assignment** subset:
+## Reference and development
 
-```sh
-# Comments and blank lines are allowed.
-OLLAMA_API_KEY="replace-with-your-key"
-# Optional: export OLLAMA_API_KEY='replace-with-your-key'
-```
-
-Quotes, embedded `=` / `#` characters, and whitespace-separated trailing comments
-are supported. Duplicate variables, malformed lines, expansions (`$VAR`, `${VAR}`),
-command substitution, and multiline values are rejected. This is **not** a shell
-or complete systemd environment.d interpreter; no code is executed and no
-variables from the file are exported into the process environment. A configured
-file is authoritative: if it cannot supply the named key, classification fails
-rather than silently using an unrelated ambient credential. Without a file,
-`api_key_env` retains its original process-environment behavior.
-
-The loader opens the file only when making an authenticated request. Initialization
-and `validate` never read credentials. Each request reopens it so key rotations
-are picked up without restarting a long-running classifier. Files are limited to
-64 KiB and must be regular files owned by root or the process user. Symlinks,
-world access, and group/other writes are rejected. On Linux, use `0600` for a
-process-owned file or `0640 root:clef-spam` for a root-managed credential read by
-the `clef-spam` service account. Keep the account in the matching group and give
-it directory traversal access; the account needs no write access to credentials.
-Parsing and access errors never contain file contents or key values.
-
-Credentials should be stored outside the repository. The ignored `config.json`
-can reference the path. A service account also needs read access to its chosen
-configuration and installed code; it does not need a login shell or ownership of
-the repository. No backend is automatically enabled by creating the account.
-
-## Questions, scores, and delivery policy
-
-`question` is configurable, but **yes must mean spam**. For example:
-`Is this unsolicited spam or a phishing email?` Inverting the question without
-changing the interpretation would invert your policy.
-
-Workers AI, SystemOne, and Transformers use Clef's native `noul` answer: the
-probability of yes. They never mistake a choice's certainty for spam probability.
-The chat adapter requests strict JSON with `spam_score`; this is a model-reported
-score, not a calibrated Clef probability. `score_kind` preserves that distinction.
-Native probabilities also need evaluation on your own spam and ham: a threshold
-of 0.98 does not promise a 2% false-positive rate.
-
-Policy defaults:
-
-- `spam_threshold: 0.98`: scores at or above this are spam.
-- `ham_threshold: 0.1`: scores at or below this are ham; values between abstain.
-- `observe_only: true`: every successful classification has `action: observe`.
-- `allow_reported_scores: false`: chat results abstain unless explicitly allowed.
-- `allow_truncated_input: false`: known-truncated evidence abstains.
-
-With observation disabled, spam yields `action: junk`; ham and uncertain yield
-`action: deliver`. These are recommendations, not mail delivery operations.
-`reason` explains abstention. No backend or unsuccessful inference is an error,
-not an ordinary uncertain/ham classification. There is currently one global
-policy per config, not recipient-specific policy.
-
-Example output (timing and digest abbreviated):
-
-```json
-{
-  "schema_version": 1,
-  "message_sha256": "...",
-  "backend": "cloudflare",
-  "classification": {
-    "spam_score": 0.99,
-    "score_kind": "native_probability",
-    "model": "clef",
-    "input_truncated": false
-  },
-  "input_truncated": false,
-  "verdict": "spam",
-  "reason": "spam_threshold",
-  "action": "observe",
-  "observe_only": true,
-  "elapsed_ms": 100.0,
-  "fallback_errors": []
-}
-```
-
-## Built-in backends
-
-| Type | Endpoint / inference | Score semantics |
-| --- | --- | --- |
-| `workers_ai` | Cloudflare account REST `/ai/run/@cf/cloudflare/clef` or `clef-flash` | Native probability |
-| `systemone` | Full configured URL, e.g. `http://127.0.0.1:30000/v1/systemone` | Native probability |
-| `openai_compatible` | Full chat-completions URL; JSON mode required | Reported score |
-| `transformers` | Local Clef backbone **and joint schema head** | Native probability |
-
-The SystemOne adapter accepts the direct `answers` response; Workers AI unwraps
-the Cloudflare `success`/`result` envelope. Chat endpoints must support
-`response_format: {"type":"json_object"}`, `temperature`, and the documented
-response shape, including `finish_reason: "stop"`; unsupported servers fail
-explicitly. An OpenAI-compatible chat endpoint is not a native Clef endpoint.
-
-HTTP uses system TLS verification, rejects redirects, caps response size at 1 MiB,
-and permits plaintext only on loopback. `timeout_seconds` is a socket I/O timeout,
-**not a hard total deadline** for a server that slowly streams bytes. Add a
-supervisor deadline when integrating into mail delivery. No built-in automatic
-retries or backoff: only retryable failures advance to the next selected backend.
-Authentication, schema, and contract errors stop immediately. Rate limits,
-connection failures, timeouts, and HTTP 5xx responses permit fallback. Fallback
-only occurs for errors, not for uncertain or non-actionable classifications.
-
-### Local Transformers
-
-```sh
-.venv/bin/pip install -e '.[transformers]'
-```
-
-Then enable `local_clef`, set a model's immutable 40-character revision SHA, and
-set `trust_remote_code: true` only after reviewing that revision's
-`joint_schema_model.py`. The model's official loader executes that code. The
-adapter lazily downloads that pinned revision, loads both backbone and decision
-head once per `Classifier`, uses inference mode, and serializes local calls.
-It does **not** use `pipeline("text-generation")`. Keep a Classifier alive for
-repeated local inference; the CLI is one process per message and would otherwise
-reload the model each time. GPU memory and optional library compatibility are
-operator concerns; there is no quantization or CPU-offload layer here.
-
-Local inference has no preemptive deadline. Truncation is checked against the
-encoder's token budget. Remote truncation is recognized only if the provider
-reports it; the default 16,000-character preprocessing bound is independent of
-the model's token context limit. Local weights were not downloaded or GPU-tested
-as part of development; HTTP adapters are tested against local fixture servers,
-not production provider accounts.
-
-## Email handling and privacy
-
-The parser reads at most `max_message_bytes + 1` bytes and rejects oversized
-messages; it never silently cuts raw MIME input. It prefers the primary plain
-text body, falls back to HTML text, and excludes attachments. It does not fetch
-links or images, execute HTML, OCR attachments, or classify every forwarded
-message/alternative separately. Selected decoded headers and the body are
-explicitly marked as untrusted evidence. The resulting state is bounded by
-`max_text_chars`; truncated JSON-shaped evidence is still a plain text state.
-
-Bodies and credentials are not included in CLI results or provider error
-messages. A successful result includes a SHA-256 digest for correlation, which
-may itself be identifying metadata. Enabling a remote backend sends selected
-mail content to that provider. Prompt separation is defense in depth, not a
-promise that malicious mail cannot influence a classifier.
-
-`filter` removes every incoming `X-Clef-*` header and continuation, then adds
-verdict, action, score, and score-kind headers. Original non-reserved headers,
-folding, MIME body, and line endings are preserved rather than reserialized.
-An existing signature that covers a removed reserved header can still be
-invalidated. Integrate after inbound signature verification and before outbound
-signing where applicable. Downstream rules must trust only mail processed through
-this stripping boundary. Do not trust a preexisting `X-Clef-Action` header.
-
-## Extending the backend contract
-
-Public types are in `clef_spam.contracts`:
-
-```python
-from clef_spam.contracts import (
-    BackendCapabilities, Classification, ClassificationRequest, ScoreKind,
-)
-
-class MyBackend:
-    capabilities = BackendCapabilities(ScoreKind.NATIVE_PROBABILITY)
-
-    def __init__(self, options: dict):
-        # Validate known options; don't perform inference/downloads here.
-        pass
-
-    def classify(self, request: ClassificationRequest) -> Classification:
-        # Provider-specific request and strict response validation goes here.
-        # Return the probability that request.question is YES.
-        return Classification(0.5, ScoreKind.NATIVE_PROBABILITY, "my-model")
-
-    def close(self) -> None:
-        # Idempotent; safe following a failed classify; never raise.
-        pass
-```
-
-A backend factory receives a fresh options dict and returns an object implementing
-`Backend`. Register an installed package entry point:
-
-```toml
-[project.entry-points."clef_spam.backends"]
-my_backend = "my_package.backend:MyBackend"
-```
-
-Use `"type": "my_backend"` in config. Built-in names are reserved; duplicate
-plugin names are rejected. Only selected plugins are loaded, so optional backend
-dependencies do not affect other adapters. Plugins are trusted executable code.
-Return immutable `Classification` values with finite scores in [0,1] and exactly
-the declared score semantics. Never return provider payloads or secrets as errors.
-
-Raise errors from `clef_spam.errors`:
-
-| Error | Retryable / fallback |
-| --- | --- |
-| `AuthenticationError` | No |
-| `InvalidResponse` | No |
-| `UnsupportedCapability` | No |
-| `RateLimitError` | Yes |
-| `BackendTimeout` | Yes |
-| `BackendUnavailable` | Yes |
-
-Do not swallow these as ham. Unexpected plugin exceptions and invalid return
-values stop classification. `Classifier.close()` releases every initialized
-backend. A Classifier is a serial API; services must bound concurrency and avoid
-sharing it unsynchronized. Backend capability flags describe local execution and
-hard timeout support; no bundled backend currently claims a hard total deadline.
-The engine has no cache, circuit breaker, persistent queue, or per-recipient
-policy yet. Those belong in the subsequent long-running integration layer.
-
-## Postfix / Dovecot delivery
-
-The `deliver` command is a Postfix **pipe transport**, not an SMTP/LMTP listener.
-It spools the input to a private temporary file, classifies bounded evidence,
-strips sender-supplied `X-Clef-*` headers, and delivers to exactly one envelope
-recipient through Dovecot's Unix LMTP socket. There are no additional dependencies
-or long-running Clef daemon. Keep existing antivirus/antispam filtering ahead of
-this final local-delivery step; outgoing remote mail need not use this transport.
-
-The sample files in `examples/postfix-master.cf`, `examples/postfix-main.cf`, and
-`examples/dovecot-clef.conf` show the wiring for `/data/scripts/clef-spam-detection`.
-Review and merge them into your own configuration; installation does not edit
-Postfix/Dovecot. Do not replace existing transports used for other mailbox types.
-The service account needs read access to the code, config and credentials and
-write access to the LMTP socket. It does not need access to Postfix's private
-queue directory or mailbox ownership. A separate restricted Dovecot listener
-avoids broadening access to Postfix's private directory.
-
-**`clef_destination_recipient_limit = 1` is mandatory.** The CLI accepts one
-`--recipient` and uses one final LMTP DATA response. Postfix splits multi-recipient
-mail into separate invocations; envelope Bcc recipients and null senders are
-preserved. There is presently one inference per recipient, with no shared cache.
-Do not use a transport configuration that sends multiple recipients to this CLI.
-
-`deliver` returns success only after Dovecot confirms DATA delivery. Inference
-failure mode is explicit: `--failure-mode=defer` (default) retains the message in
-the Postfix queue; `--failure-mode=deliver` forwards it with an `unclassified`
-verdict and `deliver` action, without a fabricated score. Oversized classification
-input may similarly be delivered unclassified. Invalid configuration, malformed
-headers/envelopes, spool failures and **all** downstream delivery failures return
-`EX_TEMPFAIL` (75), leaving responsibility with Postfix. This includes permanent
-LMTP replies; Postfix's ordinary queue lifetime remains the final retry bound.
-As with ordinary SMTP/LMTP, connection loss after acceptance but before the final
-acknowledgement can result in duplicate delivery on retry; this is not an exactly-once
-protocol. A failed QUIT is never interpreted as a failed accepted delivery.
-
-The separate delivery-spool limit defaults to 512 MiB; set it above the upstream
-Postfix `message_size_limit`, with room for added headers. The classification
-limit stays at 2 MiB by default. Data is streamed to disk and LMTP, with bounded
-buffers and SMTP dot stuffing, so large attachments need not be held in memory.
-Headers are bounded to 256 KiB. Non-ASCII envelopes or headers require downstream
-SMTPUTF8 support; otherwise delivery defers rather than corrupting addresses.
-Unix sockets are required. The Postfix sample caps simultaneous invocations at
-two, and the pipe's process timeout should exceed inference plus delivery time.
-A killed pipe or failed delivery returns no successful queue acknowledgement.
-
-Classification decisions and delivery status are logged with the `clef-spam`
-syslog tag and mail facility; no bodies, API keys or envelope addresses are logged
-by this command. An API outage can therefore be observed without blocking mail
-when `--failure-mode=deliver` is selected.
-
-The included `examples/clef-junk.sieve` files mail into Junk **only** when the
-trusted action is `junk`; observe mode never triggers it. Merge it as a global
-before-script without replacing a user's existing Sieve script, and preserve any
-existing before-script ordering. Enable it only behind the trusted stripping
-boundary. Keep the old Postfix transport/config backup for rollback.
-
-Evaluate observe-only results against labeled spam **and ham** first. Disable
-`observe_only` only after choosing a threshold. The delivery integration honors
-this setting and never forces a spam result into Junk during observation.
-
-## Development
+[Configuration and CLI](docs/CONFIGURATION.md) · [Backend contracts](docs/BACKENDS.md) ·
+[Message handling and limits](docs/MESSAGE_HANDLING.md)
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
-
-Tests use synthetic mail and a loopback HTTP fixture; no provider keys or
-mail-server access is needed. They exercise score validation, configuration,
-fallback/failure policy, MIME handling, spoofed headers, response size bounds,
-timeouts, and authentication behavior.
-
-Upstream contracts:
-[Workers AI Clef](https://developers.cloudflare.com/workers-ai/models/clef/),
-[Clef decision-head inference](https://huggingface.co/Cloudflare/clef),
-[Postfix content inspection](https://www.postfix.org/CONTENT_INSPECTION_README.html).

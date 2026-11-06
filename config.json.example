@@ -24,12 +24,12 @@
       "options": {"endpoint": "https://api.example.com/v1/chat/completions", "model": "YOUR_MODEL", "api_key_env": "CHAT_API_KEY", "timeout_seconds": 15}
     },
     "ollama_cloud": {
-      "type": "openai_compatible", "disabled": true,
+      "type": "systemone", "disabled": true,
       "options": {
-        "endpoint": "https://ollama.com/v1/chat/completions",
-        "model": "YOUR_OLLAMA_CLOUD_MODEL",
+        "endpoint": "https://ollama.com/v1/systemone",
+        "model": "clef-flash:9b",
         "api_key_env": "OLLAMA_API_KEY",
-        "api_key_env_file": "/etc/environment.d/99-ollama-api.conf",
+        "api_key_env_file": "/etc/clef-spam/ollama.env",
         "timeout_seconds": 30
       }
     },

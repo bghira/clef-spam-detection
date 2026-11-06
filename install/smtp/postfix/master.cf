@@ -1,5 +1,5 @@
 # Merge into master.cf; paths may need adapting to your installation.
-# One recipient per invocation is REQUIRED (see postfix-main.cf).
+# One recipient per invocation is REQUIRED (see main.cf).
 clef unix - n n - 2 pipe
   user=clef-spam null_sender=
   argv=/data/scripts/clef-spam-detection/.venv/bin/clef-spam
